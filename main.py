@@ -1,12 +1,14 @@
 import pycom
 import time
+from dht import DHT
 
 pycom.heartbeat(False)
-
+pycom.rgbled(0x000008) # blue
+th = DHT('P23',0)
 while True:
-    pycom.rgbled(0xFF0000)  # Red
-    time.sleep(1)
-    pycom.rgbled(0x00FF00)  # Green
-    time.sleep(1)
-    pycom.rgbled(0x0000FF)  # Blue
-    time.sleep(1)
+    time.sleep(2)
+    result = th.read()
+    if result.is_valid():
+        pycom.rgbled(0x001000) # green
+        print("Temperature:", result.temperature, "C")
+        print("Humidity:", result.humidity, "%")
