@@ -1,5 +1,6 @@
 from network import LTE
 import time
+import utime
 import socket
 import machine
 import pycom
@@ -20,10 +21,10 @@ apn_name = 'mda.lab5e'
 ip_adress = '172.16.15.14'
 port = 1234
 
-sleep_time_ms = 10*1000 # sleep for 10 seconds
+deepsleep_time_ms = 10*60*1000 # sleep for 10 minutes
 
 
-def sensor_setup(tare: bool):
+def sensor_setup():
     global weight_sensor_scale
 
     print("Setting up sensors")
@@ -31,14 +32,15 @@ def sensor_setup(tare: bool):
     dht = DHT('P23', 0)
     hx = HX711('P9', 'P10') # data, clock
     hx.set_scale(weight_sensor_scale)
-    if tare:
-        hx.tare()
+
+    # Do not tare since it is forgotten after sleep
+
     time.sleep(2) # wait for the dht sensor to stabilize
 
     return dht, hx
     
 
-def read_data(dht, hx):
+def read_data(dht, hx, wake_by_reset):
     global green_hex
 
     print("Reading sensor data")
@@ -59,6 +61,7 @@ def read_data(dht, hx):
 
     data = {
         "id": str(crypto.getrandbits(32)),
+        "wake_by_reset": wake_by_reset,
         "temperature": result.temperature,
         "humidity": result.humidity,
         "weight": val
@@ -128,61 +131,48 @@ def disconnet_lte(lte):
     lte.deinit() # Disconnect the modem
 
 
-# Previous deepsleep code (Not used currently)
-def main_deepsleep():
+
+def main():
+    start_time_ticks_ms = utime.ticks_ms()
+
+    (wake_reason, gpio_list) = machine.wake_reason()
+    if wake_reason == machine.PWRON_WAKE:
+        print("Woke up by reset button")
+    elif wake_reason == machine.PIN_WAKE:
+        print("Woke up by external pin (external interrupt)")
+        print(*gpio_list, sep=", ")
+    elif wake_reason == machine.RTC_WAKE:
+        print("Woke up by RTC (timer ran out)")
+    elif wake_reason == machine.ULP_WAKE:
+        print("Woke up by ULP (capacitive touch)")
+    
+    # Reset this wake cycle variable
+    wake_by_reset = wake_reason == machine.PWRON_WAKE
+
     pycom.heartbeat(False)
     pycom.rgbled(green_hex) 
 
-    dht, hx = sensor_setup(tare=True)
-    json_data = read_data(dht, hx)
+    dht, hx = sensor_setup()
+    json_data = read_data(dht, hx, wake_by_reset)
     lte = lte_setup(apn_name)
     send_udp_package(json_data)
 
-
-
-    disconnet_lte(lte) # Disconnect the modem
+    disconnet_lte(lte)
     pycom.rgbled(off_hex) 
 
 
-    machine.deepsleep(10*60*1000) # sleep for 10 minutes
-
-
-def main_lightsleep():
-    global sleep_time_ms
+    print('Deepsleeping for ' + str(deepsleep_time_ms/(60*1000)) + ' minutes')
+    time.sleep(0.2) # Trying to fix weird issues with the terminal where only the "Sleeping f" part of the print above is displayed
     
-    pycom.heartbeat(False)
-    pycom.rgbled(green_hex)
-
-
-    def iteration_func(tare: bool):
-
-        dht, hx = sensor_setup(tare=tare)
-        json_data = read_data(dht, hx)
-        lte = lte_setup(apn_name)
-        send_udp_package(json_data)
-
-        disconnet_lte(lte)
-        pycom.rgbled(off_hex) 
-
-        print('Sleeping for ' + str(sleep_time_ms/1000) + ' seconds')
-        time.sleep(0.5) # Trying to fix weird issues with the terminal where only the "Sleeping f" part of the print above is displayed
-        machine.sleep(sleep_time_ms) 
-
-
-    iteration_number = 1
-    print('\n######################################')
-    print('Iteration number ' + str(iteration_number))
-    iteration_func(tare=True)
-
-
-    while True:
-        iteration_number += 1
-        print('\n######################################')
-        print('Iteration number ' + str(iteration_number))
-
-        iteration_func(tare=False)
-
-
+    # Sleep for deepsleep_time_ms milliseconds, but compensate for the time it took to run the main loop (30 seconds ish)
+    actual_sleep_time = deepsleep_time_ms - utime.ticks_diff(utime.ticks_ms(), start_time_ticks_ms)
+    print("Actual sleep time is: " + str(actual_sleep_time) + "ms")
+    if actual_sleep_time < 0:
+        # Sleep for a second
+        # Will not happen for long sleep durations
+        machine.deepsleep(1000)
+    else:
+        machine.deepsleep(actual_sleep_time)
     
 
-main_lightsleep()
+main()
