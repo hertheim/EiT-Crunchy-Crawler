@@ -67,7 +67,7 @@ soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #UDP socket
 print("Socket created")
 pycom.rgbled(0x100000) # red
 
-for i in range(1, 5):   # send the data 5 times to make sure it gets through
+for i in range(1, 2):   # send the data 2 times to make sure it gets through
     print("Sending data")
     soc.sendto(out, ('172.16.15.14', 1234))
     print("Sent data")
