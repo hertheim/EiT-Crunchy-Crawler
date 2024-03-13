@@ -15,7 +15,7 @@ red_hex = 0x100000
 blue_hex = 0x000010
 off_hex = 0x000000
 
-weight_sensor_scale = 8388.6 # 2**24/1000/2 This seams to be wrong, needs to be calibrated
+weight_sensor_scale = 1667 # from linear regression
 
 apn_name = 'mda.lab5e'
 ip_adress = '172.16.15.14'
@@ -23,8 +23,20 @@ port = 1234
 
 deepsleep_time_ms = 10*60*1000 # sleep for 10 minutes
 
+def store_weight_sensor_offset(offset):
+    f = open('hx_offset.txt', 'w')
+    f.write(str(int(offset)))
+    f.close()
 
-def sensor_setup():
+def read_weight_sensor_offset():
+    f = open('hx_offset.txt', 'r')
+    offset = f.read()
+    f.close()
+    print("Read offset: ", offset)
+    print("Type: ", type(offset))
+    return int(offset)
+
+def sensor_setup(wake_by_reset):
     global weight_sensor_scale
 
     print("Setting up sensors")
@@ -34,6 +46,14 @@ def sensor_setup():
     hx.set_scale(weight_sensor_scale)
 
     # Do not tare since it is forgotten after sleep
+    if(wake_by_reset):
+        hx_offset = hx.read_average(15)
+        store_weight_sensor_offset(hx_offset)
+    else:
+        hx_offset = read_weight_sensor_offset()
+    print("Tareing with offset: ", hx_offset)
+    hx.set_offset(hx_offset)
+
 
     time.sleep(2) # wait for the dht sensor to stabilize
 
@@ -56,8 +76,9 @@ def read_data(dht, hx, wake_by_reset):
         print("Humidity:", result.humidity, "%")
 
     # get the weight, using get_units considers the scale, while get_value does not (Just raw value)
-    val = hx.get_units(times=5) 
-    print("Weight:", val, "g")
+    #val = hx.get_units(times=5) 
+    val = (hx.read_average(5)-hx.OFFSET)/hx.SCALE-0.101 #formula from linear regression
+    print("Weight (tared):", val, "g")
 
     data = {
         "id": str(crypto.getrandbits(32)),
@@ -119,7 +140,7 @@ def send_udp_package(json_package):
         print("Sending data")
         soc.sendto(json_package, (ip_adress, port))
         print("Sent data")
-        time.sleep(5) # TODO: Sometimes randomly crashes after the first "Sent" but before the second "Sending"
+        time.sleep(2) # TODO: Sometimes randomly crashes after the first "Sent" but before the second "Sending"
     soc.close() # Can randomly crash here
     print("Socket closed")
 
@@ -133,6 +154,8 @@ def disconnet_lte(lte):
 
 
 def main():
+    pycom.wifi_on_boot(False)
+    pycom.lte_modem_en_on_boot(True)
     start_time_ticks_ms = utime.ticks_ms()
 
     (wake_reason, gpio_list) = machine.wake_reason()
@@ -152,7 +175,7 @@ def main():
     pycom.heartbeat(False)
     pycom.rgbled(green_hex) 
 
-    dht, hx = sensor_setup()
+    dht, hx = sensor_setup(wake_by_reset)
     json_data = read_data(dht, hx, wake_by_reset)
     lte = lte_setup(apn_name)
     send_udp_package(json_data)
